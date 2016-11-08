@@ -15,7 +15,6 @@ exports.init = function(grunt) {
   function jsParser(fileObj, options) {
     grunt.log.verbose.writeln('Transport ' + fileObj.src + ' -> ' + fileObj.dest);
 
-
     // cache every filepath content to generate hash
     //
     // {
@@ -29,7 +28,18 @@ exports.init = function(grunt) {
     //     hash: md5(contents, [])
     //   }
     // }
-    var fileCache = {};
+    //add global cache
+    if(!global.seaTranportCache){
+      global.seaTranportCache = {};
+      global.seaTranportCache.fileCache = {};
+      global.seaTranportCache.contentCache = {};
+      global.seaTranportCache.astContentCache = {};
+      global.seaTranportCache.astParseFirstCache = {};
+    }
+    var contentCache =  global.seaTranportCache.contentCache;
+    var fileCache =  global.seaTranportCache.fileCache;
+    var astContentCache = global.seaTranportCache.astContentCache;
+    var astParseFirstCache = global.seaTranportCache.astParseFirstCache;
 
     var file = getFileInfo(path.join(process.cwd(), fileObj.src));
 
@@ -149,15 +159,30 @@ exports.init = function(grunt) {
         return [];
       }
 
-      var parsed, data = grunt.file.read(filepath);
+      var parsed, data ;// grunt.file.read(filepath);
+       //cache fileContent
+      if(contentCache[filepath]){
+        data = contentCache[filepath];
+      }
+      else{
+        data = grunt.file.read(filepath);
+        contentCache[filepath] = data;
+      }
+      // add astParseFirstCache
       try {
-        parsed = ast.parseFirst(data);
+        if(astParseFirstCache[filepath]){
+          parsed = astParseFirstCache[filepath];
+        }
+        else{
+          parsed = ast.parseFirst(data);
+          astParseFirstCache[filepath] = parsed;
+        }
+
       } catch(e) {
         grunt.log.error(e.message + ' [ line:' + e.line + ', col:' + e.col + ', pos:' + e.pos + ' ]');
         return [];
       }
-
-      return parsed.dependencies.map(function(id) {
+      var res = parsed.dependencies.map(function(id) {
         if (id.charAt(0) === '.') {
           var origId = id;
           id = iduri.appendext(id);
@@ -177,6 +202,7 @@ exports.init = function(grunt) {
           return parseModuleDependencies(id);
         }
       });
+      return res;
     }
 
     function parseModuleDependencies(id) {
@@ -225,8 +251,17 @@ exports.init = function(grunt) {
           contents: file.contents
         }];
       }
+      //add astContentCache
+      var parsed;
+      if(astContentCache[file.path]){
+        parsed = astContentCache[file.path];
+      }
+      else{
+        parsed = ast.parse(file.contents);
+        astContentCache[file.path] = parsed;
+      }
 
-      var parsed = ast.parse(file.contents);
+
       var ids = parsed.map(function(meta) {
         return meta.id;
       });
@@ -256,12 +291,20 @@ exports.init = function(grunt) {
     }
 
     function getFileInfo(path){
+      // add FileInfo cache
       if (fileCache[path]) {
         return fileCache[path];
       }
-
       if (!grunt.file.exists(path)) return;
-      var astCache, deps, contents = grunt.file.read(path);
+      var astCache, deps,contents ;
+      if(contentCache[path]){
+        contents = contentCache[path];
+      }
+      else{
+        contents = grunt.file.read(path);
+        contentCache[path] = contents;
+      }
+
 
       if (extname(path) !== '.js') {
         return fileCache[path] = {
@@ -281,10 +324,8 @@ exports.init = function(grunt) {
         grunt.log.error('js parse error ' + path.red);
         grunt.fail.fatal(e.message + ' [ line:' + e.line + ', col:' + e.col + ', pos:' + e.pos + ' ]');
       }
-
       // get id/deps of origin cmd module
       var meta = ast.parseFirst(astCache), depMap = {};
-
       if (!meta) {
         grunt.log.warn('found non cmd module "' + path + '"');
         // do nothing
@@ -311,7 +352,6 @@ exports.init = function(grunt) {
         grunt.log.verbose.writeln(deps.length ?
           'found dependencies ' + deps : 'found no dependencies');
       }
-
       return fileCache[path] = {
         id: meta.id,
         dependencies: deps,
